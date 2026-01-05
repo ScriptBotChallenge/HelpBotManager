@@ -46,7 +46,6 @@ python sizer.py
 
 - `sizer.py` - Основное приложение
 - `autoclicker.py` - Модуль автокликера
-- `mouse.py` - Низкоуровневый ввод мыши
 - `requirements.txt` - Зависимости Python
 
 ## Системные требования
