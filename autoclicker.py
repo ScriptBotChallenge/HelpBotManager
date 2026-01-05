@@ -1,51 +1,95 @@
-import tkinter as tk
-from tkinter import messagebox
-from PIL import ImageGrab
-import pyautogui
+import os
 import threading
 import time
-import os
+import tkinter as tk
+from tkinter import messagebox
+
+import pyautogui
+from PIL import Image, ImageGrab
 
 
 class AutoClicker:
     def __init__(self, search_image="search.png"):
         self.search_image = search_image
         self.terminate = False
+        self.is_running = False
+        self._thread = None
         self._last_root = None
 
+        self.sleep_found = 0.15
+        self.sleep_not_found = 0.05
+        self.sleep_error = 0.20
+
+    def set_sleeps(self, found, not_found, error=None):
+        self.sleep_found = max(0.0, float(found))
+        self.sleep_not_found = max(0.0, float(not_found))
+        if error is not None:
+            self.sleep_error = max(0.0, float(error))
+
     def start(self):
+        if self.is_running:
+            return True
+
         if not os.path.exists(self.search_image):
             messagebox.showerror("Ошибка", f"Файл {self.search_image} не найден!")
             return False
 
         self.terminate = False
-        thread = threading.Thread(target=self._clicker_loop, daemon=True)
-        thread.start()
+        self.is_running = True
+        self._thread = threading.Thread(target=self._clicker_loop, daemon=True)
+        self._thread.start()
         return True
 
     def stop(self):
         self.terminate = True
+        self.is_running = False
         messagebox.showinfo("Остановлено", "Автокликер остановлен.")
 
     def _clicker_loop(self):
+        pyautogui.PAUSE = 0
+
+        try:
+            needle = Image.open(self.search_image)
+        except Exception:
+            needle = self.search_image
+
         while not self.terminate:
             try:
-                location = pyautogui.locateCenterOnScreen(self.search_image, confidence=0.8)
+                location = pyautogui.locateCenterOnScreen(
+                    needle,
+                    confidence=0.8,
+                    grayscale=True,
+                )
                 if location:
                     pyautogui.click(location)
-                    time.sleep(0.5)
+                    time.sleep(self.sleep_found)
+                else:
+                    time.sleep(self.sleep_not_found)
             except Exception:
-                pass
-            time.sleep(1)
+                time.sleep(self.sleep_error)
+
+        self.is_running = False
 
     def select_area(self, master=None):
+        if self.is_running:
+            messagebox.showwarning("Недоступно", "Нельзя выбирать область во время работы кликера.")
+            return
+
         self._last_root = master
         if master:
             master.withdraw()
 
-        selector = ScreenSelector(self._save_area)
-        selector.grab_set()
-        selector.focus_set()
+        def on_cancel():
+            if self._last_root:
+                self._last_root.deiconify()
+
+        selector = ScreenSelector(
+            master=master,
+            callback=self._save_area,
+            on_cancel=on_cancel,
+        )
+        selector.window.grab_set()
+        selector.window.focus_set()
 
     def _save_area(self, x1, y1, x2, y2):
         if x1 == x2 or y1 == y2:
@@ -66,24 +110,27 @@ class AutoClicker:
 
 
 class ScreenSelector:
-    def __init__(self, callback):
+    def __init__(self, master, callback, on_cancel=None):
         self.callback = callback
-        self.root = tk.Tk()
-        self.root.attributes("-fullscreen", True)
-        self.root.attributes("-alpha", 0.3)
-        self.root.attributes("-topmost", True)
-        self.root.configure(bg="black")
+        self.on_cancel = on_cancel
 
-        self.canvas = tk.Canvas(self.root, cursor="cross", bg="black", highlightthickness=0)
+        self.window = tk.Toplevel(master) if master else tk.Tk()
+        self.window.attributes("-fullscreen", True)
+        self.window.attributes("-alpha", 0.3)
+        self.window.attributes("-topmost", True)
+        self.window.configure(bg="black")
+
+        self.canvas = tk.Canvas(self.window, cursor="cross", bg="black", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        self.start_x = self.start_y = None
+        self.start_x = None
+        self.start_y = None
         self.rect = None
 
         self.canvas.bind("<Button-1>", self._on_click)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
-        self.canvas.bind("<Escape>", self._on_escape)
+        self.window.bind("<Escape>", self._on_escape)
         self.canvas.focus_set()
 
     def _on_click(self, event):
@@ -107,10 +154,10 @@ class ScreenSelector:
         x2 = max(self.start_x, event.x)
         y2 = max(self.start_y, event.y)
 
-        self.root.destroy()
+        self.window.destroy()
         self.callback(x1, y1, x2, y2)
 
-    def _on_escape(self, event):
-        self.root.destroy()
-        if hasattr(self, '_last_root') and self._last_root:
-            self._last_root.deiconify()
+    def _on_escape(self, _event=None):
+        self.window.destroy()
+        if self.on_cancel:
+            self.on_cancel()
